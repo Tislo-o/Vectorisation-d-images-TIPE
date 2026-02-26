@@ -2,7 +2,7 @@
 #include "external/stb_image.h"
 #include <stdio.h>
 
-//crée un fichier svg de nom filename suivant les dimensions with et height
+//crée un fichier svg de nom filename suivant les dimensions width et height
 void creer_svg(const char* filename, const int width, const int height) {
     FILE* f = fopen(filename, "w");
     //Ecriture du header
@@ -29,4 +29,5 @@ int main() {
     creer_svg("resultat.svg", 2000, 2000);
     return 0;
 }
+
 
