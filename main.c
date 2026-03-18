@@ -5,36 +5,76 @@
 #include <string.h>
 
 #include "r_string.h"
+#include "vector.h"
+#include "global.h"
 
 #define N 3
+#define NONE_U32 ~((u32)0)
+
+s8_tuple directions[] = {
+    {0,1},{0,-1},{1,0},{-1,0}
+};
+typedef enum Direction {
+    BOTTOM = 0,
+    TOP = 1,
+    RIGHT = 2,
+    LEFT = 8,
+    ENUM_END
+}Direction;
+
+
 
 typedef struct{
-    uint16_t x;
-    uint16_t y;
+    u16 x;
+    u16 y;
 }Pixel;
 
 typedef struct{
-    int width;
-    int height;
+    u16 width;
+    u16 height;
     int channels; //nombre de canaux, 3 ou 4 suivant la présence du canal alpha
-    uint8_t* data;
+    u8* data;
 }bitmap_img;
 
 typedef struct{
-    uint8_t red;
-    uint8_t green;
-    uint8_t blue;
+    u8 red;
+    u8 green;
+    u8 blue;
 }Color;
+//une forme est une zone de l'image délimitée par son contour, une liste de pixels
+typedef struct{
+    vec* contour; //tableau redimmensionable des pixels du contour
+    Color color;
+}shape;
+
+void shape_destroy(void* p) {
+    shape* n = p;
+    free_vec(n->contour);
+}
 
 //Renvoie la couleur du pixel p dans l'image bitmap img
-Color pixel_color(bitmap_img* img, Pixel* p) {
-    assert(p->x >= 0 && p->y >= 0 && p->x < img->width && p->y < img->height);
-
-    int idx = (p->y * img->width + p->x) * img->channels;
-
+Color pixel_color(bitmap_img* img, int idx) {
     return (Color){img->data[idx], img->data[idx + 1], img->data[idx + 2]};
 }
 
+
+bool pixel_in_shape(bitmap_img* img, shape* s, Pixel* px, Direction d, u32* ind) {
+    //Pixel dans l'image
+    int x = (int)px->x + directions[d].x, y = (int)px->y + directions[d].y;
+    
+    if (x < 0 || x >= img->width || y < 0 || y >= img->height) return false;
+
+    //Le pixel est disponible(pas dans une autre forme)
+    int idx = (y * img->width + x) * img->channels;
+    if (ind[idx] == NONE_U32) return false;
+
+    //Le pixel est assez proche en couleur
+    Color c = pixel_color(img, idx);
+    int dif = (s->color.blue - c.blue)*(s->color.blue - c.blue) + 
+              (s->color.green - c.green)*(s->color.green - c.green) + 
+              (s->color.red - c.red)*(s->color.red - c.red);
+    return dif < 40;
+}
 //à partir d'une liste de points, construit un chaîne de caractère dans str
 //décrivant le path passant par tous les points
 r_string* create_path(const Pixel* pixels, int n_points) {
@@ -65,8 +105,6 @@ r_string* create_path(const Pixel* pixels, int n_points) {
     }
 }
 
-
-
 //crée un fichier svg de nom 'filename' suivant les dimensions 'width' et 'height'
 void create_svg(const char* filename) {
     FILE* f = fopen(filename, "w");
@@ -89,21 +127,85 @@ void create_svg(const char* filename) {
     fclose(f);
 }
 
-int main() {
-    /***  CODE POUR LIRE UNE IMAGE ***/
-    // bitmap_img img; 
-    // img.data = stbi_load("paysage.jpg", &img.width, &img.height, &img.channels, 0);
-    // if (img.data == NULL) {
-    //     printf("Erreur chargement\n");
-    //     return 1;
-    // }
-    // for (int i = 0; i < img.height; ++i) {
-    //     for (int j = 0; j < img.width; ++j) {
-    //     }
-    // }
-    // stbi_image_free(img.data);  
 
-    create_svg("resultat.svg");
+//ajoute une forme a la liste de formes shapes
+//*rem: nombre de pixels restants
+//visited: tableau de n 'false'
+void add_shape(bitmap_img* img, vec* shapes, u32* av, u32* ind, u32* rem, bool* visited) {
+    shape* s = vec_push(shapes);
+    s->contour = empty_vec(sizeof(Pixel), NULL);
+
+    u32* stack = malloc(*rem * sizeof(u32)); //pile de pixels en attente d'être visité
+    stack[0] = av[0];                        //premier pixel disponible
+    s->color = pixel_color(img, av[0]);
+    u32 stack_size = 1;
+
+
+    while (stack_size > 0) {
+        u32 idx = stack[stack_size-1];
+        Pixel px = (Pixel){idx % img->width, idx / img->width};
+
+        for (Direction d = TOP; d < ENUM_END; ++d) {
+            
+            if (pixel_in_shape(img, s, &px, d, ind)) {
+                av[ind[idx]] = av[*rem - 1];
+                ind[av[*rem - 1]] = ind[idx];
+                ind[idx] = NONE_U32;
+                (*rem)--;
+
+                stack[stack_size];
+            } else {
+                vec_add(s->contour, idx);
+            }
+        }
+        
+    }
+
+
+
+    free(stack);
+}
+
+//renvoie un vec de toutes les formes composant l'image
+vec* get_shapes(bitmap_img* img) {
+
+    vec* shapes = empty_vec(sizeof(shape), shape_destroy);
+
+    u32 n = img->height * img->width;
+
+    u32* available = malloc(n * sizeof(u32)); //pixels restants de l'image
+    u32* indices =  malloc(n * sizeof(u32)); //indice des pixels dans le tableau précédent
+    bool* blank = malloc(n * sizeof(bool));  //tableau de n 'false' 
+    bool* in_shape_visited = malloc(n * sizeof(bool));
+    for (int i = 0; i < n; ++i) {
+        blank[i] = false;
+        available[i] = i;
+        indices[i] = i;
+    } 
+    u32 remaining = n;
+
+    while (remaining > 0) {
+        memcpy(in_shape_visited, blank, n * sizeof(bool));
+        add_shape(img, shapes, available, indices, &remaining, in_shape_visited);
+    }
+    free(indices);
+    free(available);
+
+    return shapes;
+}
+int main() {
+    bitmap_img img; 
+    img.data = stbi_load("dirt.png", (int*)&img.width, (int*)&img.height, &img.channels, 0);
+    if (img.data == NULL) {
+        printf("Erreur chargement\n");
+        return 1;
+    }
+    //vec* shapes = get_shapes(&img);
+    //free_vec(shapes);
+
+    stbi_image_free(img.data);  
+
+    //create_svg("resultat.svg");
     return 0;
 }
 
