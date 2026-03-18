@@ -23,8 +23,10 @@ vec* empty_vec(int stride, void (*destroy)(void*)) {
 }
 //free the vector v
 void free_vec(vec* v) {
-    for (int i = 0; i < v->count; ++i) {
-        v->destroy(v->data + i * v->stride);
+    if (v->destroy != NULL) {
+        for (int i = 0; i < v->count; ++i) {
+            v->destroy(v->data + i * v->stride);
+        }
     }
     free(v->data);
     free(v);
