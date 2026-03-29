@@ -36,9 +36,9 @@ typedef struct{
     u8 green;
     u8 blue;
 }Color;
-//une forme est une zone de l'image délimitée par son contour, une liste de sommets  et sa couleur
+//une forme est une zone de l'image délimitée par son contour, une liste de pixels  et sa couleur
 typedef struct{
-    vec* contour; //tableau redimmensionable des sommets du contour
+    vec* contour; //tableau redimmensionable des pixels du contour
     Color color;
 }shape;
 
