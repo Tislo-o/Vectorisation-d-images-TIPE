@@ -1,8 +1,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "external/stb_image.h"
-#include <stdio.h>
-#include <stdbool.h>
-#include <string.h>
+#include <time.h>
 
 #include "global.h"
 #include "r_string.h"
@@ -194,7 +192,6 @@ r_string* create_path2(bitmap_img* img, vec* v) {
         concat_float(s, (float)vi->y);
     }
 
-
     return s;
 }
 
@@ -229,12 +226,12 @@ void create_svg(const char* filename, bitmap_img* img, vec* shapes) {
 //visited: tableau de n 'false'
 void add_shape(bitmap_img* img, vec* shapes, dset* remaining, bool* visited) {
     //----------Parcourir tous les pixels de la forme----------//
-    Pixel starting_px = dset_give_element(remaining);    //pixel disponible
+    Pixel starting_px = dset_get_min_element(remaining);    //pixel le plus en haut à gauche disponible
     Color c = pixel_color(img, starting_px);
 
     u32* stack = malloc(remaining->count * sizeof(u32)); //pile de pixels en attente d'être visité
-    stack[0] = starting_px;
     u32 stack_size = 1;
+    stack[0] = starting_px;
 
     dset_remove_element(remaining, starting_px);
     visited[starting_px] = true;
@@ -327,24 +324,39 @@ vec* get_shapes(bitmap_img* img) {
 }
 int main() {
     bitmap_img img; 
-    img.data = stbi_load("img/earth3.jpg", (int*)&img.width, (int*)&img.height, &img.channels, 0);
+    img.data = stbi_load("img/galaxie.jpg", (int*)&img.width, (int*)&img.height, &img.channels, 0);
     if (img.data == NULL) {
-        printf("Erreur chargement\n");
+        printf("Erreur de chargement.\n");
         return 1;
     }
+    if (img.height * img.width > (~((u32)0))) {
+        printf("L'image contient trop de pixels.");
+        return 1;
+    }
+    clock_t start = clock();
+
     vec* shapes = get_shapes(&img);
 
-    for (int i = 0; i < shapes->count; ++i) {
-        shape* s = vec_get_element(shapes, i);
-        printf("Color %d %d %d:\n", s->color.red, s->color.green, s->color.blue);
+    clock_t end = clock();
+    float ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
+    printf("Création des contours: %fms\n", ms);
 
-        for (int k = 0; k < s->contour->count; ++k) {
-            Vertex* v = vec_get_element(s->contour, k);
-            printf("x:%d y:%d\n", v->x, v->y);
-        }
-    }
+    // for (int i = 0; i < shapes->count; ++i) {
+    //     shape* s = vec_get_element(shapes, i);
+    //     printf("Color %d %d %d:\n", s->color.red, s->color.green, s->color.blue);
+
+    //     for (int k = 0; k < s->contour->count; ++k) {
+    //         Vertex* v = vec_get_element(s->contour, k);
+    //         printf("x:%d y:%d\n", v->x, v->y);
+    //     }
+    // }
+    start = clock();
 
     create_svg("resultat.svg", &img, shapes);
+
+    end = clock();
+    ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
+    printf("Ecriture du fichier svg: %fms\n", ms);
     free_vec(shapes);
     stbi_image_free(img.data);
     return 0;
