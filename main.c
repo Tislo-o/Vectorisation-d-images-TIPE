@@ -322,9 +322,14 @@ vec* get_shapes(bitmap_img* img) {
 
     return shapes;
 }
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 1){
+        printf("Donnez le nom de l'image en argument.\n");
+        return 0;
+    }
+    
     bitmap_img img; 
-    img.data = stbi_load("img/galaxie.jpg", (int*)&img.width, (int*)&img.height, &img.channels, 0);
+    img.data = stbi_load(argv[1], (int*)&img.width, (int*)&img.height, &img.channels, 0);
     if (img.data == NULL) {
         printf("Erreur de chargement.\n");
         return 1;
