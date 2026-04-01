@@ -122,10 +122,13 @@ Color pixel_color(bitmap_img* img, Pixel px) {
 //renvoie si le pixel px est assez proche en couleur de la couleur ref
 bool is_close_color(bitmap_img* img, Color ref, Pixel px) {
     Color c = pixel_color(img, px);
-    int dif = (ref.blue - c.blue)*(ref.blue - c.blue) + 
-              (ref.green - c.green)*(ref.green - c.green) + 
-              (ref.red - c.red)*(ref.red - c.red);
-    return dif < 4000;
+    float dr = (ref.red - c.red);
+    float dg = (ref.green - c.green);
+    float db = (ref.blue - c.blue);
+    float rb = (ref.red + c.red)/2.f;
+
+    float dif = (2.f + rb/256.f)*dr*dr + 4.f*dg*dg + (2.f + (255.f - rb) / 256.f)*db*db;
+    return dif < 4000.f;
 }   
 
 r_string* create_path(bitmap_img* img, vec* v) {
@@ -315,6 +318,10 @@ vec* get_shapes(bitmap_img* img) {
     while (remaining->count > 0) {
         memcpy(in_shape_visited, blank, n * sizeof(bool)); //on réinitialise les pixels visités à 'aucuns'
         add_shape(img, shapes, remaining, in_shape_visited);
+        // shape* s = vec_get_element(shapes, shapes->count - 1);
+        // if () {
+        //     vec_remove(s);
+        // }
     }
     free_dset(remaining);
     free(blank);
@@ -323,8 +330,8 @@ vec* get_shapes(bitmap_img* img) {
     return shapes;
 }
 int main(int argc, char** argv) {
-    if (argc == 1){
-        printf("Donnez le nom de l'image en argument.\n");
+    if (argc < 3){
+        printf("Donnez le nom de l'image en argument et le nom de l'image générée.\n");
         return 0;
     }
     
@@ -345,6 +352,8 @@ int main(int argc, char** argv) {
     clock_t end = clock();
     float ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
     printf("Création des contours: %fms\n", ms);
+    printf("Nombre de formes : %d\n", shapes->count);
+
 
     // for (int i = 0; i < shapes->count; ++i) {
     //     shape* s = vec_get_element(shapes, i);
@@ -357,7 +366,7 @@ int main(int argc, char** argv) {
     // }
     start = clock();
 
-    create_svg("resultat.svg", &img, shapes);
+    create_svg(argv[2], &img, shapes);
 
     end = clock();
     ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
