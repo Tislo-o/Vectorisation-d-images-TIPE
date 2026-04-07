@@ -8,7 +8,9 @@
 #include "dense_set.h"
 
 //constantes
-#define COL_THRESHOLD 8000.f //distance au carrée maximale entre 2 couleur pour qu'elles soient considérées comme identiques
+//4000
+#define COL_THRESHOLD 4000.f //distance au carrée maximale entre 2 couleur pour qu'elles soient considérées comme identiques
+//8000
 #define DEL_TRESHOLD 8000.f //ratio minimal (nb pixels de l'image / nb pixels d'une forme) pour que la forme soit considérée comme trop petite
 #define DEL_COL_TRESHOLD 8000.f //distance au carrée minimale entre la couleur d'une forme trop petite et celle de son environnement pour qu'elle soit considérée comme visible
 
@@ -246,71 +248,88 @@ void add_shape(bitmap_img* img, vec* shapes, dset* remaining, bool* visited) {
 
     u32 s_nb_px = 1; //nombre de pixels de la forme
     u64 red = c_first.red, green = c_first.green, blue = c_first.blue;
-    while (stack_size > 0) {
+    Pixel px_out = starting_px; //dernier pixel hors de la forme trouvé
+    Pixel last_starting_px = starting_px; //pixel de départ du précédent agrandissement
+    Pixel neighbour;
+    bool neighbour_in_s;
+    bool is_big_enough; //si la forme est assez grande
+    bool s_finished = false;
+    while (!s_finished) {
         u32 px = stack[stack_size-1]; //on récupère le premier pixel de la pile
         stack_size--;
 
         for (Straight_Dir d = TOP; d < ENUM_END; ++d) {
-            Pixel neighbour;
-            if (!PtoP_neighbour(img, px, &neighbour, d) || visited[neighbour]) {
-                continue;
-            }
-            Color c_neighbour = pixel_color(img, neighbour);
-            if (is_in_dset(remaining, neighbour)  &&
-                is_close_color(c_first, c_neighbour, COL_THRESHOLD)) {
-                    
-                dset_remove_element(remaining, neighbour);
-                stack_size++;
-                stack[stack_size-1] = neighbour;
-                visited[neighbour] = true;
+            neighbour_in_s = PtoP_neighbour(img, px, &neighbour, d);
+            if (neighbour_in_s && !visited[neighbour]) {
+                Color c_neighbour = pixel_color(img, neighbour);
+                if (is_in_dset(remaining, neighbour)) {
+                    if (is_close_color(c_first, c_neighbour, COL_THRESHOLD)) {
+                        
+                        dset_remove_element(remaining, neighbour);
+                        stack_size++;
+                        stack[stack_size-1] = neighbour;
+                        visited[neighbour] = true;
 
-                red += c_neighbour.red;
-                green += c_neighbour.green;
-                blue += c_neighbour.blue;
-                s_nb_px ++;
-            } 
-        }     
+                        red += c_neighbour.red;
+                        green += c_neighbour.green;
+                        blue += c_neighbour.blue;
+                        s_nb_px ++;
+                    }else{
+                        px_out = neighbour;
+                    }
+                }
+            }
+        }
+        if (stack_size == 0){
+            is_big_enough = img->width * img->height / (float)s_nb_px <= DEL_TRESHOLD;
+            if (!is_big_enough && px_out != last_starting_px){
+                last_starting_px = px_out;
+                stack_size++;
+                stack[stack_size-1] = px_out;
+                visited[px_out] = true;
+            }else{
+                s_finished = true;
+            }
+        }    
     }
     free(stack);
 
-    //----------Construire le contour----------//
     Color c_shape =(Color){red / s_nb_px, green / s_nb_px, blue / s_nb_px}; //couleur de la forme
-    bool is_big_enough = img->width * img->height / (float)s_nb_px <= DEL_TRESHOLD;
-    //bool is_different_enough = !is_close_color(, , DEL_COL_TRESHOLD);
-    if (is_big_enough) {
-        shape* s = vec_push(shapes);
-        s->color = c_shape;
-        s->contour = empty_vec(sizeof(Vertex), NULL);
+    //----------Construire le contour----------//
+    //fonction(visited, c_shape, starting_px, shapes)
+    //bool is_different_enough = !is_close_color(, , DEL_COL_TRESHOLD);//temp
+    shape* s = vec_push(shapes);
+    s->color = c_shape;
+    s->contour = empty_vec(sizeof(Vertex), NULL);
 
-        //On ajoute le sommet en haut à gauche
-        Vertex starting_vertex;
-        PtoV_neighbour(img, starting_px, &starting_vertex, TOP_LEFT);
-        vec_add(s->contour, &starting_vertex);
+    //On ajoute le sommet en haut à gauche
+    Vertex starting_vertex;
+    PtoV_neighbour(img, starting_px, &starting_vertex, TOP_LEFT);
+    vec_add(s->contour, &starting_vertex);
 
-        Straight_Dir d_mov = RIGHT; //direction dans le sens du déplacement
-        Straight_Dir d_cen = BOTTOM; //direction vers le centre de la forme
-        Straight_Dir tmp;
-        Vertex cur;                  //le sommet courant
-        PtoV_neighbour(img, starting_px, &cur, TOP_RIGHT);
-        while (starting_vertex.x != cur.x || starting_vertex.y != cur.y) {
-            vec_add(s->contour, &cur);
-            
-            Angled_Dir d1 = straighs_to_angled[d_mov*4+d_cen];              //direction résultante de d_mov et d_cen
-            Angled_Dir d2 = straighs_to_angled[d_mov*4+((d_cen + 2) & 3)]; //direction résultante de d_mov et l'opposé de d_cen
-            assert(d1 != ERROR && d2 != ERROR);
-            Pixel p1;      
-            Pixel p2;      
-            if (!VtoP_neighbour(img, cur, &p1, d1) || !visited[p1]) { //si p1 est hors de la forme
-                tmp = d_mov;
-                d_mov = d_cen;            //direction du mouvement est maintenant celle du centre
-                d_cen = (tmp + 2) & 3;    //direction du centre prend la direction opposée du mouvement 
-            } else if (VtoP_neighbour(img, cur, &p2, d2) && visited[p2]) { //si p2 est dans la forme
-                    tmp = d_cen;
-                    d_cen = d_mov;            //direction du centre est maintenant celle du mouvement
-                    d_mov = (tmp + 2) & 3;    //direction du mouvement prend la direction opposée du centre
-            }
-            assert(VtoV_neighbour(img, cur, &cur, d_mov));
+    Straight_Dir d_mov = RIGHT; //direction dans le sens du déplacement
+    Straight_Dir d_cen = BOTTOM; //direction vers le centre de la forme
+    Straight_Dir tmp;
+    Vertex cur;                  //le sommet courant
+    PtoV_neighbour(img, starting_px, &cur, TOP_RIGHT);
+    while (starting_vertex.x != cur.x || starting_vertex.y != cur.y) {
+        vec_add(s->contour, &cur);
+        
+        Angled_Dir d1 = straighs_to_angled[d_mov*4+d_cen];              //direction résultante de d_mov et d_cen
+        Angled_Dir d2 = straighs_to_angled[d_mov*4+((d_cen + 2) & 3)]; //direction résultante de d_mov et l'opposé de d_cen
+        assert(d1 != ERROR && d2 != ERROR);
+        Pixel p1;      
+        Pixel p2;      
+        if (!VtoP_neighbour(img, cur, &p1, d1) || !visited[p1]) { //si p1 est hors de la forme
+            tmp = d_mov;
+            d_mov = d_cen;            //direction du mouvement est maintenant celle du centre
+            d_cen = (tmp + 2) & 3;    //direction du centre prend la direction opposée du mouvement 
+        } else if (VtoP_neighbour(img, cur, &p2, d2) && visited[p2]) { //si p2 est dans la forme
+                tmp = d_cen;
+                d_cen = d_mov;            //direction du centre est maintenant celle du mouvement
+                d_mov = (tmp + 2) & 3;    //direction du mouvement prend la direction opposée du centre
         }
+        assert(VtoV_neighbour(img, cur, &cur, d_mov));
     }
 } 
 
