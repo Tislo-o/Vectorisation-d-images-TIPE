@@ -1,462 +1,74 @@
-#define STB_IMAGE_IMPLEMENTATION
-#include "external/stb_image.h"
-#include <time.h>
-
+#pragma once
+#include <assert.h>
+#include <stdbool.h>
 #include "global.h"
-#include "r_string.h"
-#include "vector.h"
-#include "dense_set.h"
 
-#define COL_THRESHOLD 4000.f //distance au carrée maximale entre 2 couleurs pour qu'elles soient considérées comme identiques
-#define DEL_THRESHOLD 10000.f //ratio minimal (nb pixels de l'image / nb pixels d'une forme) pour que la forme soit considérée comme trop petite
+#define REMOVED ~((u32)0)
 
-typedef u32 Pixel;
-typedef struct{
-    u16 x;
-    u16 y;
-}Vertex; //sommet
+//array of distinct elements which provides these operations in O(1) time:
+//-know if an element is in the array
+//-remove an element by value
+//-get the minimum element of the array
+typedef struct dense_set{
+    u32 count;  //number of elements remaining
+    u32 N_bot;      //number of elements at the creation of the set, also serves as the end of start of the set
+    u32 N_top;     //serves as the end of the set
+    u32* next;  //next[i] can equal... 
+                //k: the element after i is k
+                //N_top: i is the max
 
-#define NO_SHAPE 65535 //2^16 - 1 valeur maximale d'un u16
+    u32* prev;  //prev[i] can equal... 
+                //k: the element before i is k
+                //N_bot:    no element before i, i is the minimum
+                //REMOVED:    i was removed from the set
+}dset;
+//return a dset with containing all the integers between 0 and count-1
+dset* full_dset(u32 count) {
+    dset* d = malloc(sizeof(dset));
+    d->prev = malloc(sizeof(u32) * (count+2));
+    d->next = malloc(sizeof(u32) * (count+2));
+    d->count = count;
+    d->N_bot = count;
+    d->N_top = count+1;
+    for (int i = 0; i < count; ++i) {
+        d->prev[i] = i-1;
+        d->next[i] = i+1;
+    }
+    d->prev[0] = d->N_bot;
+    d->next[d->N_bot] = 0;
 
-typedef enum{
-    TOP = 0,
-    RIGHT = 1,
-    BOTTOM = 2,
-    LEFT = 3,
-    ENUM_END
-}Straight_Dir;
-s8_tuple straight_dir[] = { //décalages x/y pour passer de pixel à pixel ou de sommet à sommet
-    {0,-1},{1,0},{0,1},{-1,0}
-};
-
-typedef enum{
-    TOP_RIGHT = 0,
-    BOTTOM_RIGHT = 1,
-    BOTTOM_LEFT = 2,
-    TOP_LEFT = 3,
-    ERROR = 4
-}Angled_Dir;
-s8_tuple dir_VToP[] = { //décalages x/y pour passer de sommet à pixel
-    {0,-1},{0,0},{-1,0},{-1,-1}
-};
-s8_tuple dir_PToV[] = { //décalages x/y pour passer de pixel à sommet
-    {1,0},{1,1},{0,1},{0,0}
-};
-//convertit 2 directions "droites" en une direction en biais
-Angled_Dir straights_to_angled[16] = {
-    ERROR, TOP_RIGHT, ERROR, TOP_LEFT,       //(TOP, TOP) (TOP, RIGHT) (TOP, BOTTOM) (TOP, LEFT)
-    TOP_RIGHT, ERROR, BOTTOM_RIGHT, ERROR,   //(RIGHT, TOP) (RIGHT, RIGHT) (RIGHT, BOTTOM) (RIGHT, LEFT)
-    ERROR, BOTTOM_RIGHT, ERROR, BOTTOM_LEFT, //(BOTTOM, TOP) (BOTTOM, RIGHT) (BOTTOM, BOTTOM) (BOTTOM, LEFT)
-    TOP_LEFT, ERROR, BOTTOM_LEFT, ERROR,     //(LEFT, TOP) (LEFT, RIGHT) (LEFT, BOTTOM) (LEFT, LEFT)
-};
-
-
-
-typedef struct{
-    u16 width;
-    u16 height;
-    int channels; //nombre de canaux, 3 ou 4 suivant la présence du canal alpha
-    u8* data;
-}bitmap_img;
-
-typedef struct{
-    u8 red;
-    u8 green;
-    u8 blue;
-}Color;
-//une forme est une zone de l'image délimitée par son contour, une liste de sommets  et sa couleur
-typedef struct{
-    vec* pixels; //tableau redimmensionable des pixels à l'intérieur de la forme
-    vec* outline; //tableau redimmensionable des sommets du contour
-    Color color;
-    u16 ID;   
-}shape;
-
-void shape_destroy(void* p) {
-    shape* n = p;
-    if (n->pixels != NULL) free_vec(n->pixels);
-    if (n->outline != NULL) free_vec(n->outline);
+    d->prev[d->N_top] = count-1;
+    d->next[count-1] = d->N_top;
+    return d;
 }
-//Si le pixel voisin du pixel src est hors de l'image, retourne false
-//Sinon retourne true et met dans *dst le pixel correspondant
-static inline bool PtoP_neighbour(bitmap_img* img, Pixel src, Pixel* dst, Straight_Dir d) {
-    u16 w = img->width;
-    u16 x = src % w;
-    u16 y = src / w;
-    int nx = x + straight_dir[d].x;
-    int ny = y + straight_dir[d].y;
-    if (nx < 0 || nx >= w || ny < 0 || ny >= img->height) return false;
-    *dst = ny * w + nx;
-    return true;
-}
-//Un sommet voisin d'un pixel est toujours dans l'image
-//Met dans dst le sommet correspondant
-static inline void PtoV_neighbour(bitmap_img* img, Pixel src, Vertex* dst, Angled_Dir d) {
-    u16 w = img->width;
-    u16 x = src % w;
-    u16 y = src / w;
-    int nx = x + dir_PToV[d].x;
-    int ny = y + dir_PToV[d].y;
-    assert(nx >= 0 && nx < w+1 && ny >= 0 && ny < img->height+1 && "Ce cas est impossible avec un pixel dans l'image");
-    dst->x = nx;
-    dst->y = ny;
-}
-//Si le pixel voisin du sommet src est hors de l'image, retourne false
-//Sinon retourne true et met dans *dst le pixel correspondant
-static inline bool VtoP_neighbour(bitmap_img* img, Vertex src, Pixel* dst, Angled_Dir d) {
-    u16 w = img->width;
-    int nx = src.x + dir_VToP[d].x;
-    int ny = src.y + dir_VToP[d].y;
-    if (nx < 0 || nx >= w || ny < 0 || ny >= img->height) return false;
-    *dst = ny * w + nx;
-    return true;
-}
-//Si le sommet voisin du sommet src est hors de l'image, retourne false
-//Sinon retourne true et met dans *dst le sommet correspondant
-static inline bool VtoV_neighbour(bitmap_img* img, Vertex src, Vertex* dst, Straight_Dir d) {
-    int nx = src.x + straight_dir[d].x;
-    int ny = src.y + straight_dir[d].y;
-    if (nx < 0 || nx >= img->width+1 || ny < 0 || ny >= img->height+1) return false;
-    dst->x = nx;
-    dst->y = ny;
-    return true;
+void free_dset(dset* d) {
+    free(d->prev);
+    free(d->next);
+    free(d);
 }
 
-//Renvoie la couleur du pixel p dans l'image bitmap img
-static inline Color pixel_color(bitmap_img* img, Pixel px) {
-    u64 idx = px * img->channels;
-    return (Color){img->data[idx], img->data[idx + 1], img->data[idx + 2]};
+u32 dset_get_min_element(dset* d) {
+    assert(d->count != 0);
+
+    return d->next[d->N_bot];
 }
-
-//renvoie la distance au carré des couleurs c1 et c2 
-float color_distance(Color c1, Color c2) {
-    float dr = (c1.red - c2.red);
-    float dg = (c1.green - c2.green);
-    float db = (c1.blue - c2.blue);
-    float rb = (c1.red + c2.red)/2.f;
-
-    return (2.f + rb/256.f)*dr*dr + 4.f*dg*dg + (2.f + (255.f - rb) / 256.f)*db*db;
-}   
-
-
-r_string* create_path(bitmap_img* img, vec* v) {
-    u32 n_points = v->count;
-
-    u16 w = img->width;
-
-    Vertex* v0 = (Vertex*)vec_get_element(v, 0);
-    float x0 = v0->x;
-    float y0= v0->y;
-
-    r_string* s = create_r_string("M");
-
-    concat_float(s, x0);
-    concat_float(s, y0);
-    for (int i = 1; i < n_points; ++i) {
-        concat_str(s, " L");
-
-        Vertex* vi = (Vertex*)vec_get_element(v, i);
-        concat_float(s, (float)vi->x);
-        concat_float(s, (float)vi->y);
-    }
-
-    return s;
+//return if e is in the dset, e must be 
+bool is_in_dset(dset* d, u32 e) {
+    assert(e < d->N_bot);
+    return d->prev[e] != REMOVED;
 }
+//remove an element that must be in the dset
+void dset_remove_element(dset* d, u32 e) {
+    assert(e < d->N_bot);
 
-//crée un fichier svg de nom 'filename' 
-void create_svg(const char* filename, bitmap_img* img, vec* shapes) {
-    FILE* f = fopen(filename, "w");
-    u16 width, height;
-    if (img->width > img->height) {
-        width = 2000;
-        height = (img->height * 2000) / img->width;
-    } else {
-        height = 2000;
-        width = (img->width * 2000) / img->height;
-    }
-    //Ecriture du header
-    fprintf(f, " <svg xmlns=\"http://www.w3.org/2000/svg\" ");
-    fprintf(f, " width=\"%dpx\" height=\"%dpx\" ", width, height);
-    fprintf(f, " viewBox=\"0 0 %d %d\"> ", img->width, img->height);
+    u32 p = d->prev[e];
+    u32 n = d->next[e];
 
-    for (int i = 0; i < shapes->count; ++i) {
-        shape* s = vec_get_element(shapes, i);
-        r_string* path = create_path(img, s->outline);
-        fprintf(f, "<path d=\"%s\" fill=\"rgb(%d, %d, %d)\"/>", path->data, s->color.red, s->color.green, s->color.blue);
-        free_r_string(path);
-    }
-    fprintf(f, "</svg>");
-    fclose(f);
-}
+    assert(p != REMOVED);
 
+    d->next[p] = n;
+    d->prev[n] = p;
 
-//ajoute une forme a la liste de formes shapes
-//visited: tableau de n 'false'
-void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) {
-    assert(shapes->count <= 65535 && "Nombre de formes excède 65536!");
-    //printf("NEW SHAPE|");
-    shape* s = vec_push(shapes);
-    s->ID = shapes->count - 1;
-    s->pixels = empty_vec(sizeof(Pixel), NULL);
-    s->outline = NULL;
-
-     //----------Parcourir tous les pixels de la forme----------//
-    Pixel starting_px = dset_get_min_element(remaining);    //pixel le plus en haut à gauche disponible
-    Color c_first = pixel_color(img, starting_px);
-
-    u32* stack = malloc(remaining->count * sizeof(u32)); //pile de pixels en attente d'être visité
-    u32 stack_size = 1;
-    stack[0] = starting_px;
-
-    dset_remove_element(remaining, starting_px);
-    vec_add(s->pixels, &starting_px);
-    shape_on_px[starting_px] = s->ID;
-
-    u32 s_nb_px = 1; //nombre de pixels de la forme
-    u64 red = c_first.red, green = c_first.green, blue = c_first.blue;
-    Pixel px_out = starting_px; //dernier pixel hors de la forme trouvé
-    Pixel last_starting_px = starting_px; //pixel de départ du précédent agrandissement
-    bool s_finished = false;
-    while (!s_finished) {
-        u32 px = stack[stack_size-1]; //on récupère le premier pixel de la pile
-        stack_size--;
-
-        for (Straight_Dir d = TOP; d < ENUM_END; ++d) {
-            Pixel neighbour;
-            if (PtoP_neighbour(img, px, &neighbour, d) && shape_on_px[neighbour] == NO_SHAPE) {
-                Color c_neighbour = pixel_color(img, neighbour);
-
-                if (color_distance(c_first, c_neighbour) <= COL_THRESHOLD) {
-                   // printf("%d|", neighbour);
-                    dset_remove_element(remaining, neighbour);
-                    vec_add(s->pixels, &neighbour);
-                    shape_on_px[neighbour] = s->ID;
-
-                    stack_size++;
-                    stack[stack_size-1] = neighbour;
-
-                    red += c_neighbour.red;
-                    green += c_neighbour.green;
-                    blue += c_neighbour.blue;
-                    s_nb_px ++;
-                }else{
-                    px_out = neighbour;
-                }
-            }
-        }
-        if (stack_size == 0){
-            s_finished = true;
-            // bool is_big_enough = img->width * img->height / (float)s_nb_px <= DEL_THRESHOLD;
-            // if (!is_big_enough && px_out != last_starting_px){
-            //     last_starting_px = px_out;
-            //     stack_size++;
-            //     stack[stack_size-1] = px_out;
-            //     shape_on_px[px_out] = s->ID;
-            // }else{
-            //     s_finished = true;
-            // }
-        }    
-    }
-    free(stack);
-
-    Color c_shape =(Color){red / s_nb_px, green / s_nb_px, blue / s_nb_px}; //couleur de la forme
-    s->color = c_shape;
-    
-} 
-
-//renvoie un vec de toutes les formes composant l'image
-vec* get_shapes(bitmap_img* img) {
-    //---------Création des formes en parcourant l'image--------//
-    clock_t start = clock();
-
-    vec* shapes = empty_vec(sizeof(shape), shape_destroy); //liste des formes
-    u32 n = img->height * img->width;           //nombre de pixels
-    u32 n2 = (img->height+1) * (img->width+1);  //nombre de sommets
-
-    dset* remaining = full_dset(n);
-    u16* shape_on_px = malloc(sizeof(u64) * n); //...[i] = ID de la forme au pixel i
-    for (int i = 0; i < n; ++i) {
-        shape_on_px[i] = NO_SHAPE;
-    }
-    while (remaining->count > 0) {
-        add_shape(img, shapes, remaining, shape_on_px);
-    }
-    free_dset(remaining);
-
-    clock_t end = clock();
-    float ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
-    printf("%d formes créées: %f ms\n", shapes->count, ms);
-    fflush(stdout);
-
-    //-------Fusion des petites formes avec d'autres adjacentes-------//
-    start = clock();
-
-    u16* ID_to_idx = malloc(sizeof(u16) * shapes->count);
-    for (int i = 0; i < shapes->count; ++i) {
-        ID_to_idx[i] = i;
-    }
-    shape* s;
-    //printf("MIN: %d\n", (u32)(n / DEL_THRESHOLD));
-    for (int i = 0; i < shapes->count; ) {
-        s = vec_get_element(shapes, i);
-        //printf("%d|", i);
-        //fflush(stdout);
-        if (s->pixels->count <= (n / DEL_THRESHOLD)) { //si s est trop petite
-
-            //1---Trouver une forme voisine, la plus proche en couleur si 2 sont disponibles
-            Pixel p_first = *(Pixel*)vec_get_element(s->pixels, 0);
-            Pixel p_nei_l, p_nei_t;
-            u16 left_ID, top_ID, nei_ID;
-            shape* s_nei, *s_nei_l, *s_nei_t;
-
-            bool left = PtoP_neighbour(img, p_first, &p_nei_l, LEFT);
-            bool top = PtoP_neighbour(img, p_first, &p_nei_t, TOP);
-
-            if (left) {
-                left_ID = shape_on_px[p_nei_l];
-                if (top) {
-                    top_ID = shape_on_px[p_nei_t];
-
-                    s_nei_l = vec_get_element(shapes, ID_to_idx[left_ID]);
-                    s_nei_t = vec_get_element(shapes, ID_to_idx[top_ID]);
-                    if (color_distance(s_nei_t->color, s->color) > color_distance(s_nei_l->color, s->color)) {
-                        nei_ID = left_ID;
-                        s_nei = s_nei_l;
-                    } else {
-                        nei_ID = top_ID;
-                        s_nei = s_nei_t;
-                    }
-                } else {
-                    s_nei = vec_get_element(shapes, ID_to_idx[left_ID]);
-                }
-            } else {
-                if (top) {
-                    top_ID = shape_on_px[p_nei_t];
-                    s_nei = vec_get_element(shapes, ID_to_idx[top_ID]);
-                } else {
-                    continue;
-                    ++i;
-                }
-            }
-
-            //2---Changer la forme voisine et le tableau global shape_on_px
-            Pixel p_first_nei = *(Pixel*)vec_get_element(s_nei->pixels, 0);
-            u32 old_nei_px_count = s_nei->pixels->count;
-
-            vec_concatenate(s_nei->pixels, s->pixels);
-
-            if (p_first < p_first_nei) {  //remettre le pixel les plus en haut à gauche en première position
-                vec_swap(s_nei->pixels, 0, old_nei_px_count);
-            }
-
-            for (int idx = 0; idx < s->pixels->count; ++idx) {
-                shape_on_px[*(Pixel*)vec_get_element(s->pixels, idx)] = nei_ID;
-            }
-            
-            //3---Supprimer la forme trop petite
-            vec_remove_by_index(shapes, i);
-            if (i < shapes->count) {
-                shape* last = vec_get_element(shapes, i);
-                ID_to_idx[last->ID] = i;
-            }
-        } else {
-            ++i;
-        }
-    }
-    free(ID_to_idx);
-
-    end = clock();
-    ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
-    printf("Fusion des plus petites formes pour arriver à %d formes: %f ms\n", shapes->count, ms);
-
-    //-------Création du contour pour chaque forme-------//
-    start = clock();
-
-    for (int i = 0; i < shapes->count; ++i) {
-        shape* s = vec_get_element(shapes, i);
-        s->outline = empty_vec(sizeof(Vertex), NULL);
-        
-        Pixel starting_px = *(Pixel*)vec_get_element(s->pixels, 0);
-
-        //On ajoute le sommet en haut à gauche
-        Vertex starting_vertex;
-        PtoV_neighbour(img, starting_px, &starting_vertex, TOP_LEFT);
-        vec_add(s->outline, &starting_vertex);
-
-        Straight_Dir d_mov = RIGHT; //direction dans le sens du déplacement
-        Straight_Dir d_cen = BOTTOM; //direction vers le centre de la forme
-        Straight_Dir tmp;
-        Vertex cur;                  //le sommet courant
-        PtoV_neighbour(img, starting_px, &cur, TOP_RIGHT);
-        while (starting_vertex.x != cur.x || starting_vertex.y != cur.y) {
-            vec_add(s->outline, &cur);
-
-            Angled_Dir d1 = straights_to_angled[d_mov*4+d_cen];              //direction résultante de d_mov et d_cen
-            Angled_Dir d2 = straights_to_angled[d_mov*4+((d_cen + 2) & 3)]; //direction résultante de d_mov et l'opposé de d_cen
-            assert(d1 != ERROR && d2 != ERROR);
-            Pixel p1;      
-            Pixel p2;      
-            if (!VtoP_neighbour(img, cur, &p1, d1) || shape_on_px[p1] != s->ID) { //si p1 est hors de la forme
-                tmp = d_mov;
-                d_mov = d_cen;            //direction du mouvement est maintenant celle du centre
-                d_cen = (tmp + 2) & 3;    //direction du centre prend la direction opposée du mouvement 
-            } else if (VtoP_neighbour(img, cur, &p2, d2) && shape_on_px[p2] == s->ID) { //si p2 est dans la forme
-                    tmp = d_cen;
-                    d_cen = d_mov;            //direction du centre est maintenant celle du mouvement
-                    d_mov = (tmp + 2) & 3;    //direction du mouvement prend la direction opposée du centre
-            }
-            assert(VtoV_neighbour(img, cur, &cur, d_mov));
-        }
-    }
-    free(shape_on_px);
-
-    end = clock();
-    ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
-    printf("Création du contour de chaque forme: %fms\n", ms);
-
-    return shapes;
-}
-
-int main(int argc, char** argv) {
-    if (argc < 3){
-        printf("Donnez le nom de l'image en argument et le nom de l'image générée.\n");
-        return 1;
-    }
-    
-    bitmap_img img; 
-    img.data = stbi_load(argv[1], (int*)&img.width, (int*)&img.height, &img.channels, 0);
-    
-    if (img.data == NULL) {
-        printf("Erreur de chargement.\n");
-        return 1;
-    }
-    if (img.height * img.width > (~((u32)0))) {
-        printf("L'image contient trop de pixels.");
-        return 1;
-    }
-
-    vec* shapes = get_shapes(&img);
-
-
-    for (int i = 0; i < shapes->count; ++i) {
-        shape* s = vec_get_element(shapes, i);
-        printf("Color %d %d %d:\n", s->color.red, s->color.green, s->color.blue);
-        //printf("Pixel count: %d|\n", s->pixels->count);
-       assert(s->pixels->count > (img.width * img.height) / DEL_THRESHOLD);
-        for (int k = 0; k < s->pixels->count; ++k) {
-            Pixel* p = vec_get_element(s->pixels, k);
-            printf("x:%d y:%d\n", *p % img.width, *p / img.width);
-        }
-    }
-    clock_t start = clock();
-
-    create_svg(argv[2], &img, shapes);
-
-    clock_t end = clock();
-    float ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
-    printf("Ecriture de %s: %fms\n", argv[2], ms);
-
-    free_vec(shapes);
-    stbi_image_free(img.data);
-    return 0;
+    d->prev[e] = REMOVED;
+    d->count--;
 }
