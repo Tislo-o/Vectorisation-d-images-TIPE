@@ -8,7 +8,7 @@
 #include "dense_set.h"
 
 #define COL_THRESHOLD 4000.f //distance au carrée maximale entre 2 couleurs pour qu'elles soient considérées comme identiques
-#define DEL_THRESHOLD 100.f //ratio minimal (nb pixels de l'image / nb pixels d'une forme) pour que la forme soit considérée comme trop petite
+#define DEL_THRESHOLD 10000.f //ratio minimal (nb pixels de l'image / nb pixels d'une forme) pour que la forme soit considérée comme trop petite
 
 typedef u32 Pixel;
 typedef struct{
@@ -74,10 +74,8 @@ typedef struct{
 
 void shape_destroy(void* p) {
     shape* n = p;
-    free_vec(n->pixels);
-    if (n->outline != NULL) {
-        free_vec(n->outline);
-    }
+    if (n->pixels != NULL) free_vec(n->pixels);
+    if (n->outline != NULL) free_vec(n->outline);
 }
 //Si le pixel voisin du pixel src est hors de l'image, retourne false
 //Sinon retourne true et met dans *dst le pixel correspondant
@@ -125,26 +123,24 @@ static inline bool VtoV_neighbour(bitmap_img* img, Vertex src, Vertex* dst, Stra
 }
 
 //Renvoie la couleur du pixel p dans l'image bitmap img
-Color pixel_color(bitmap_img* img, Pixel px) {
+static inline Color pixel_color(bitmap_img* img, Pixel px) {
     u64 idx = px * img->channels;
     return (Color){img->data[idx], img->data[idx + 1], img->data[idx + 2]};
 }
 
-//renvoie true si la distance au carré des couleurs c1 et c2 sont <= threshold
-bool is_close_color(Color c1, Color c2, float threshold) {
+//renvoie la distance au carré des couleurs c1 et c2 
+float color_distance(Color c1, Color c2) {
     float dr = (c1.red - c2.red);
     float dg = (c1.green - c2.green);
     float db = (c1.blue - c2.blue);
     float rb = (c1.red + c2.red)/2.f;
 
-    float dif = (2.f + rb/256.f)*dr*dr + 4.f*dg*dg + (2.f + (255.f - rb) / 256.f)*db*db;
-    return dif < threshold;
+    return (2.f + rb/256.f)*dr*dr + 4.f*dg*dg + (2.f + (255.f - rb) / 256.f)*db*db;
 }   
 
 
 r_string* create_path(bitmap_img* img, vec* v) {
     u32 n_points = v->count;
-    printf("n_points: %d|", n_points);
 
     u16 w = img->width;
 
@@ -157,14 +153,12 @@ r_string* create_path(bitmap_img* img, vec* v) {
     concat_float(s, x0);
     concat_float(s, y0);
     for (int i = 1; i < n_points; ++i) {
-        printf("%d|", i);
         concat_str(s, " L");
 
         Vertex* vi = (Vertex*)vec_get_element(v, i);
         concat_float(s, (float)vi->x);
         concat_float(s, (float)vi->y);
     }
-    printf("end");
 
     return s;
 }
@@ -186,10 +180,8 @@ void create_svg(const char* filename, bitmap_img* img, vec* shapes) {
     fprintf(f, " viewBox=\"0 0 %d %d\"> ", img->width, img->height);
 
     for (int i = 0; i < shapes->count; ++i) {
-        printf("%d|",i);
-        fflush(stdout);
         shape* s = vec_get_element(shapes, i);
-        r_string* path = create_path(img, s->pixels);
+        r_string* path = create_path(img, s->outline);
         fprintf(f, "<path d=\"%s\" fill=\"rgb(%d, %d, %d)\"/>", path->data, s->color.red, s->color.green, s->color.blue);
         free_r_string(path);
     }
@@ -234,7 +226,7 @@ void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) 
             if (PtoP_neighbour(img, px, &neighbour, d) && shape_on_px[neighbour] == NO_SHAPE) {
                 Color c_neighbour = pixel_color(img, neighbour);
 
-                if (is_close_color(c_first, c_neighbour, COL_THRESHOLD)) {
+                if (color_distance(c_first, c_neighbour) <= COL_THRESHOLD) {
                    // printf("%d|", neighbour);
                     dset_remove_element(remaining, neighbour);
                     vec_add(s->pixels, &neighbour);
@@ -254,12 +246,12 @@ void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) 
         }
         if (stack_size == 0){
             s_finished = true;
-            // is_big_enough = img->width * img->height / (float)s_nb_px <= DEL_THRESHOLD;
+            // bool is_big_enough = img->width * img->height / (float)s_nb_px <= DEL_THRESHOLD;
             // if (!is_big_enough && px_out != last_starting_px){
             //     last_starting_px = px_out;
             //     stack_size++;
             //     stack[stack_size-1] = px_out;
-            //     visited[px_out] = true;
+            //     shape_on_px[px_out] = s->ID;
             // }else{
             //     s_finished = true;
             // }
@@ -267,50 +259,21 @@ void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) 
     }
     free(stack);
 
-    //----------Construire le contour----------//
     Color c_shape =(Color){red / s_nb_px, green / s_nb_px, blue / s_nb_px}; //couleur de la forme
     s->color = c_shape;
     
-
-    // //On ajoute le sommet en haut à gauche
-    // Vertex starting_vertex;
-    // PtoV_neighbour(img, starting_px, &starting_vertex, TOP_LEFT);
-    // vec_add(s->contour, &starting_vertex);
-
-    // Straight_Dir d_mov = RIGHT; //direction dans le sens du déplacement
-    // Straight_Dir d_cen = BOTTOM; //direction vers le centre de la forme
-    // Straight_Dir tmp;
-    // Vertex cur;                  //le sommet courant
-    // PtoV_neighbour(img, starting_px, &cur, TOP_RIGHT);
-    // while (starting_vertex.x != cur.x || starting_vertex.y != cur.y) {
-    //     vec_add(s->contour, &cur);
-
-    //     Angled_Dir d1 = straights_to_angled[d_mov*4+d_cen];              //direction résultante de d_mov et d_cen
-    //     Angled_Dir d2 = straights_to_angled[d_mov*4+((d_cen + 2) & 3)]; //direction résultante de d_mov et l'opposé de d_cen
-    //     assert(d1 != ERROR && d2 != ERROR);
-    //     Pixel p1;      
-    //     Pixel p2;      
-    //     if (!VtoP_neighbour(img, cur, &p1, d1) || !visited[p1]) { //si p1 est hors de la forme
-    //         tmp = d_mov;
-    //         d_mov = d_cen;            //direction du mouvement est maintenant celle du centre
-    //         d_cen = (tmp + 2) & 3;    //direction du centre prend la direction opposée du mouvement 
-    //     } else if (VtoP_neighbour(img, cur, &p2, d2) && visited[p2]) { //si p2 est dans la forme
-    //             tmp = d_cen;
-    //             d_cen = d_mov;            //direction du centre est maintenant celle du mouvement
-    //             d_mov = (tmp + 2) & 3;    //direction du mouvement prend la direction opposée du centre
-    //     }
-    //     assert(VtoV_neighbour(img, cur, &cur, d_mov));
-    // }
 } 
 
 //renvoie un vec de toutes les formes composant l'image
 vec* get_shapes(bitmap_img* img) {
+    //---------Création des formes en parcourant l'image--------//
+    clock_t start = clock();
 
     vec* shapes = empty_vec(sizeof(shape), shape_destroy); //liste des formes
     u32 n = img->height * img->width;           //nombre de pixels
     u32 n2 = (img->height+1) * (img->width+1);  //nombre de sommets
 
-    dset* remaining = full_dset(n); //ensemble des pixels disponibles
+    dset* remaining = full_dset(n);
     u16* shape_on_px = malloc(sizeof(u64) * n); //...[i] = ID de la forme au pixel i
     for (int i = 0; i < n; ++i) {
         shape_on_px[i] = NO_SHAPE;
@@ -318,44 +281,76 @@ vec* get_shapes(bitmap_img* img) {
     while (remaining->count > 0) {
         add_shape(img, shapes, remaining, shape_on_px);
     }
+    free_dset(remaining);
+
+    clock_t end = clock();
+    float ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
+    printf("%d formes créées: %f ms\n", shapes->count, ms);
+    fflush(stdout);
 
     //-------Fusion des petites formes avec d'autres adjacentes-------//
+    start = clock();
 
     u16* ID_to_idx = malloc(sizeof(u16) * shapes->count);
     for (int i = 0; i < shapes->count; ++i) {
         ID_to_idx[i] = i;
     }
     shape* s;
-
+    //printf("MIN: %d\n", (u32)(n / DEL_THRESHOLD));
     for (int i = 0; i < shapes->count; ) {
         s = vec_get_element(shapes, i);
-
+        //printf("%d|", i);
+        //fflush(stdout);
         if (s->pixels->count <= (n / DEL_THRESHOLD)) { //si s est trop petite
 
-            //1---Trouver une forme voisine
+            //1---Trouver une forme voisine, la plus proche en couleur si 2 sont disponibles
             Pixel p_first = *(Pixel*)vec_get_element(s->pixels, 0);
-            assert(p_first < n);
-            Pixel p_neighbour;
-            if (!PtoP_neighbour(img, p_first, &p_neighbour, LEFT) && !PtoP_neighbour(img, p_first, &p_neighbour, TOP)) {
-                ++i;
-                continue;   //dans ce cas la forme est celle avec le premier pixel tout en haut à gauche
+            Pixel p_nei_l, p_nei_t;
+            u16 left_ID, top_ID, nei_ID;
+            shape* s_nei, *s_nei_l, *s_nei_t;
+
+            bool left = PtoP_neighbour(img, p_first, &p_nei_l, LEFT);
+            bool top = PtoP_neighbour(img, p_first, &p_nei_t, TOP);
+
+            if (left) {
+                left_ID = shape_on_px[p_nei_l];
+                if (top) {
+                    top_ID = shape_on_px[p_nei_t];
+
+                    s_nei_l = vec_get_element(shapes, ID_to_idx[left_ID]);
+                    s_nei_t = vec_get_element(shapes, ID_to_idx[top_ID]);
+                    if (color_distance(s_nei_t->color, s->color) > color_distance(s_nei_l->color, s->color)) {
+                        nei_ID = left_ID;
+                        s_nei = s_nei_l;
+                    } else {
+                        nei_ID = top_ID;
+                        s_nei = s_nei_t;
+                    }
+                } else {
+                    s_nei = vec_get_element(shapes, ID_to_idx[left_ID]);
+                }
+            } else {
+                if (top) {
+                    top_ID = shape_on_px[p_nei_t];
+                    s_nei = vec_get_element(shapes, ID_to_idx[top_ID]);
+                } else {
+                    continue;
+                    ++i;
+                }
             }
-            u16 neighbour_ID = shape_on_px[p_neighbour];
-            assert(neighbour_ID != s->ID);
 
             //2---Changer la forme voisine et le tableau global shape_on_px
-            shape* s_neighbour = vec_get_element(shapes, ID_to_idx[neighbour_ID]);
-            Pixel p_first_neighbour = *(Pixel*)vec_get_element(s_neighbour->pixels, 0);
-            u32 old_neighbour_px_count = s_neighbour->pixels->count;
+            Pixel p_first_nei = *(Pixel*)vec_get_element(s_nei->pixels, 0);
+            u32 old_nei_px_count = s_nei->pixels->count;
 
-            vec_concatenate(s_neighbour->pixels, s->pixels);
+            vec_concatenate(s_nei->pixels, s->pixels);
 
-            if (p_first < p_first_neighbour) {  //remettre le pixel les plus en haut à gauche en première position
-                vec_swap(s_neighbour->pixels, 0, old_neighbour_px_count);
+            if (p_first < p_first_nei) {  //remettre le pixel les plus en haut à gauche en première position
+                vec_swap(s_nei->pixels, 0, old_nei_px_count);
             }
 
             for (int idx = 0; idx < s->pixels->count; ++idx) {
-                shape_on_px[*(Pixel*)vec_get_element(s->pixels, idx)] = neighbour_ID;
+                shape_on_px[*(Pixel*)vec_get_element(s->pixels, idx)] = nei_ID;
             }
             
             //3---Supprimer la forme trop petite
@@ -364,20 +359,60 @@ vec* get_shapes(bitmap_img* img) {
                 shape* last = vec_get_element(shapes, i);
                 ID_to_idx[last->ID] = i;
             }
-
-
         } else {
             ++i;
         }
     }
     free(ID_to_idx);
 
+    end = clock();
+    ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
+    printf("Fusion des plus petites formes pour arriver à %d formes: %f ms\n", shapes->count, ms);
+
     //-------Création du contour pour chaque forme-------//
+    start = clock();
 
-   // bool is_big_enough = img->width * img->height / (float)s_nb_px <= DEL_THRESHOLD;
+    for (int i = 0; i < shapes->count; ++i) {
+        shape* s = vec_get_element(shapes, i);
+        s->outline = empty_vec(sizeof(Vertex), NULL);
+        
+        Pixel starting_px = *(Pixel*)vec_get_element(s->pixels, 0);
 
-    free_dset(remaining);
+        //On ajoute le sommet en haut à gauche
+        Vertex starting_vertex;
+        PtoV_neighbour(img, starting_px, &starting_vertex, TOP_LEFT);
+        vec_add(s->outline, &starting_vertex);
+
+        Straight_Dir d_mov = RIGHT; //direction dans le sens du déplacement
+        Straight_Dir d_cen = BOTTOM; //direction vers le centre de la forme
+        Straight_Dir tmp;
+        Vertex cur;                  //le sommet courant
+        PtoV_neighbour(img, starting_px, &cur, TOP_RIGHT);
+        while (starting_vertex.x != cur.x || starting_vertex.y != cur.y) {
+            vec_add(s->outline, &cur);
+
+            Angled_Dir d1 = straights_to_angled[d_mov*4+d_cen];              //direction résultante de d_mov et d_cen
+            Angled_Dir d2 = straights_to_angled[d_mov*4+((d_cen + 2) & 3)]; //direction résultante de d_mov et l'opposé de d_cen
+            assert(d1 != ERROR && d2 != ERROR);
+            Pixel p1;      
+            Pixel p2;      
+            if (!VtoP_neighbour(img, cur, &p1, d1) || shape_on_px[p1] != s->ID) { //si p1 est hors de la forme
+                tmp = d_mov;
+                d_mov = d_cen;            //direction du mouvement est maintenant celle du centre
+                d_cen = (tmp + 2) & 3;    //direction du centre prend la direction opposée du mouvement 
+            } else if (VtoP_neighbour(img, cur, &p2, d2) && shape_on_px[p2] == s->ID) { //si p2 est dans la forme
+                    tmp = d_cen;
+                    d_cen = d_mov;            //direction du centre est maintenant celle du mouvement
+                    d_mov = (tmp + 2) & 3;    //direction du mouvement prend la direction opposée du centre
+            }
+            assert(VtoV_neighbour(img, cur, &cur, d_mov));
+        }
+    }
     free(shape_on_px);
+
+    end = clock();
+    ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
+    printf("Création du contour de chaque forme: %fms\n", ms);
 
     return shapes;
 }
@@ -390,6 +425,7 @@ int main(int argc, char** argv) {
     
     bitmap_img img; 
     img.data = stbi_load(argv[1], (int*)&img.width, (int*)&img.height, &img.channels, 0);
+    
     if (img.data == NULL) {
         printf("Erreur de chargement.\n");
         return 1;
@@ -398,32 +434,28 @@ int main(int argc, char** argv) {
         printf("L'image contient trop de pixels.");
         return 1;
     }
-    clock_t start = clock();
 
     vec* shapes = get_shapes(&img);
-
-    clock_t end = clock();
-    float ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
-    //printf("%d contours créés en %fms\n", shapes->count, ms);
 
 
     for (int i = 0; i < shapes->count; ++i) {
         shape* s = vec_get_element(shapes, i);
         printf("Color %d %d %d:\n", s->color.red, s->color.green, s->color.blue);
-       // printf("Pixel count: %d|\n", s->pixels->count);
+        //printf("Pixel count: %d|\n", s->pixels->count);
+       assert(s->pixels->count > (img.width * img.height) / DEL_THRESHOLD);
         for (int k = 0; k < s->pixels->count; ++k) {
-            //printf("true");
             Pixel* p = vec_get_element(s->pixels, k);
             printf("x:%d y:%d\n", *p % img.width, *p / img.width);
         }
     }
-    start = clock();
+    clock_t start = clock();
 
-    //create_svg(argv[2], &img, shapes);
+    create_svg(argv[2], &img, shapes);
 
-    end = clock();
-    ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
-    //printf("Ecriture du fichier svg: %fms\n", ms);
+    clock_t end = clock();
+    float ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
+    printf("Ecriture de %s: %fms\n", argv[2], ms);
+
     free_vec(shapes);
     stbi_image_free(img.data);
     return 0;
