@@ -8,7 +8,7 @@
 #include "dense_set.h"
 
 #define COL_THRESHOLD 4000.f //distance au carrée maximale entre 2 couleurs pour qu'elles soient considérées comme identiques
-#define DEL_THRESHOLD 10000.f //ratio minimal (nb pixels de l'image / nb pixels d'une forme) pour que la forme soit considérée comme trop petite
+#define DEL_THRESHOLD 1000.f //ratio minimal (nb pixels de l'image / nb pixels d'une forme) pour que la forme soit considérée comme trop petite
 
 typedef u32 Pixel;
 typedef struct{
@@ -194,7 +194,7 @@ void create_svg(const char* filename, bitmap_img* img, vec* shapes) {
 //visited: tableau de n 'false'
 void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) {
     assert(shapes->count <= 65535 && "Nombre de formes excède 65536!");
-    //printf("NEW SHAPE|");
+
     shape* s = vec_push(shapes);
     s->ID = shapes->count - 1;
     s->pixels = empty_vec(sizeof(Pixel), NULL);
@@ -214,10 +214,7 @@ void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) 
 
     u32 s_nb_px = 1; //nombre de pixels de la forme
     u64 red = c_first.red, green = c_first.green, blue = c_first.blue;
-    Pixel px_out = starting_px; //dernier pixel hors de la forme trouvé
-    Pixel last_starting_px = starting_px; //pixel de départ du précédent agrandissement
-    bool s_finished = false;
-    while (!s_finished) {
+    while (stack_size > 0) {
         u32 px = stack[stack_size-1]; //on récupère le premier pixel de la pile
         stack_size--;
 
@@ -227,7 +224,6 @@ void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) 
                 Color c_neighbour = pixel_color(img, neighbour);
 
                 if (color_distance(c_first, c_neighbour) <= COL_THRESHOLD) {
-                   // printf("%d|", neighbour);
                     dset_remove_element(remaining, neighbour);
                     vec_add(s->pixels, &neighbour);
                     shape_on_px[neighbour] = s->ID;
@@ -239,29 +235,13 @@ void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) 
                     green += c_neighbour.green;
                     blue += c_neighbour.blue;
                     s_nb_px ++;
-                }else{
-                    px_out = neighbour;
                 }
             }
-        }
-        if (stack_size == 0){
-            s_finished = true;
-            // bool is_big_enough = img->width * img->height / (float)s_nb_px <= DEL_THRESHOLD;
-            // if (!is_big_enough && px_out != last_starting_px){
-            //     last_starting_px = px_out;
-            //     stack_size++;
-            //     stack[stack_size-1] = px_out;
-            //     shape_on_px[px_out] = s->ID;
-            // }else{
-            //     s_finished = true;
-            // }
         }    
     }
     free(stack);
 
-    Color c_shape =(Color){red / s_nb_px, green / s_nb_px, blue / s_nb_px}; //couleur de la forme
-    s->color = c_shape;
-    
+    s->color = (Color){red / s_nb_px, green / s_nb_px, blue / s_nb_px}; //couleur de la forme
 } 
 
 //renvoie un vec de toutes les formes composant l'image
@@ -299,52 +279,79 @@ vec* get_shapes(bitmap_img* img) {
     u16 next_slot = 0;  //case où placer la prochaine forme dans shape
     for (int i = 0; i < total; ++i) {
         shape* s = vec_get_element(shapes, i);
-        //printf("%d|", i);
-        //fflush(stdout);
+
         if (s->pixels->count <= (n / DEL_THRESHOLD)) { //si s est trop petite
 
-            //1---Trouver une forme voisine, la plus proche en couleur si 2 sont disponibles
-            Pixel p_first = *(Pixel*)vec_get_element(s->pixels, 0);
-            Pixel p_nei_l, p_nei_t;
-            u16 left_ID, top_ID, nei_ID;
-            shape* s_nei, *s_nei_l, *s_nei_t;
+            //1---Trouver une forme voisine, la plus proche en couleur
+            Pixel starting_px = *(Pixel*)vec_get_element(s->pixels, 0);
+            Color s_color = s->color;
+            u16 nei_ID = NO_SHAPE;
+            float best_dist = 10e30;
+            
 
-            bool left = PtoP_neighbour(img, p_first, &p_nei_l, LEFT);
-            bool top = PtoP_neighbour(img, p_first, &p_nei_t, TOP);
 
-            if (left) {
-                left_ID = shape_on_px[p_nei_l];
-                if (top) {
-                    top_ID = shape_on_px[p_nei_t];
 
-                    s_nei_l = vec_get_element(shapes, ID_to_idx[left_ID]);
-                    s_nei_t = vec_get_element(shapes, ID_to_idx[top_ID]);
-                    if (color_distance(s_nei_t->color, s->color) > color_distance(s_nei_l->color, s->color)) {
-                        nei_ID = left_ID;
-                        s_nei = s_nei_l;
-                    } else {
-                        nei_ID = top_ID;
-                        s_nei = s_nei_t;
+             //On ajoute le sommet en haut à gauche
+            Vertex starting_vertex;
+            PtoV_neighbour(img, starting_px, &starting_vertex, TOP_LEFT);
+
+            Straight_Dir d_mov = RIGHT; //direction dans le sens du déplacement
+            Straight_Dir d_cen = BOTTOM; //direction vers le centre de la forme
+            Straight_Dir tmp;
+            Vertex cur;                  //le sommet courant
+            PtoV_neighbour(img, starting_px, &cur, TOP_RIGHT);
+            while (starting_vertex.x != cur.x || starting_vertex.y != cur.y) {
+
+                Angled_Dir d1 = straights_to_angled[d_mov*4+d_cen];              //direction résultante de d_mov et d_cen
+                Angled_Dir d2 = straights_to_angled[d_mov*4+((d_cen + 2) & 3)]; //direction résultante de d_mov et l'opposé de d_cen
+                assert(d1 != ERROR && d2 != ERROR);
+                Pixel p1;      
+                Pixel p2; 
+                bool p1_in_image = VtoP_neighbour(img, cur, &p1, d1);
+                bool p2_in_image = VtoP_neighbour(img, cur, &p2, d2);
+                if (!p1_in_image || shape_on_px[p1] != s->ID) { //si p1 est hors de la forme
+                    tmp = d_mov;
+                    d_mov = d_cen;            //direction du mouvement est maintenant celle du centre
+                    d_cen = (tmp + 2) & 3;    //direction du centre prend la direction opposée du mouvement 
+                    if (p1_in_image) {
+                        float dist = color_distance(pixel_color(img, p1), s_color);
+                        if (dist < best_dist) {
+                            best_dist = dist;
+                            nei_ID = shape_on_px[p1];
+                        }
                     }
+                    
+                } else if (p2_in_image && shape_on_px[p2] == s->ID) { //si p2 est dans la forme
+                        tmp = d_cen;
+                        d_cen = d_mov;            //direction du centre est maintenant celle du mouvement
+                        d_mov = (tmp + 2) & 3;    //direction du mouvement prend la direction opposée du centre
                 } else {
-                    nei_ID = left_ID;
-                    s_nei = vec_get_element(shapes, ID_to_idx[left_ID]);
+                    if (p2_in_image) {
+                        float dist = color_distance(pixel_color(img, p2), s_color);
+                        if (dist < best_dist) {
+                            best_dist = dist;
+                            nei_ID = shape_on_px[p2];
+                        }
+                    }
+                    
                 }
-            } else {
-                if (top) {
-                    top_ID = shape_on_px[p_nei_t];
-                    nei_ID = top_ID;
-                    s_nei = vec_get_element(shapes, ID_to_idx[top_ID]);
-                } else {
-                    continue;
-                }
+                VtoV_neighbour(img, cur, &cur, d_mov);
             }
-            float t = s_nei->pixels->count / (float)(s_nei->pixels->count + s->pixels->count);
-            if (t < 0.8f) printf("%.2f|", t);
-            // s_nei->color = (Color){(u8)((float)s_nei->color.red * t + (float)s->color.red * (1.f - t)),
-            //                         (u8)((float)s_nei->color.green * t + (float)s->color.green * (1.f - t)),
-            //                         (u8)((float)s_nei->color.blue * t + (float)s->color.blue * (1.f - t))};
-            s_nei->color = s_nei->pixels->count > s->pixels->count ? s_nei->color : s->color;
+            assert(nei_ID != NO_SHAPE);
+            assert(ID_to_idx[nei_ID] != NO_SHAPE);
+
+
+
+
+
+            shape* s_nei = vec_get_element(shapes, ID_to_idx[nei_ID]);
+
+            //float t = s_nei->pixels->count / (float)(s_nei->pixels->count + s->pixels->count);
+          // if (t < 0.8f) printf("%.2f|", t);
+            // s_nei->color = (Color){(u8)((float)s_nei->color.red * t + (float)s_color.red * (1.f - t)),
+            //                         (u8)((float)s_nei->color.green * t + (float)s_color.green * (1.f - t)),
+            //                         (u8)((float)s_nei->color.blue * t + (float)s_color.blue * (1.f - t))};
+         s_nei->color = s_nei->pixels->count > s->pixels->count ? s_nei->color : s->color;
 
             //2---Changer la forme voisine et le tableau global shape_on_px
             Pixel p_first_nei = *(Pixel*)vec_get_element(s_nei->pixels, 0);
@@ -352,7 +359,7 @@ vec* get_shapes(bitmap_img* img) {
 
             vec_concatenate(s_nei->pixels, s->pixels);
 
-            if (p_first < p_first_nei) {  //remettre le pixel les plus en haut à gauche en première position
+            if (starting_px < p_first_nei) {  //remettre le pixel les plus en haut à gauche en première position
                 vec_swap(s_nei->pixels, 0, old_nei_px_count);
             }
 
@@ -413,7 +420,7 @@ vec* get_shapes(bitmap_img* img) {
                     d_cen = d_mov;            //direction du centre est maintenant celle du mouvement
                     d_mov = (tmp + 2) & 3;    //direction du mouvement prend la direction opposée du centre
             }
-            assert(VtoV_neighbour(img, cur, &cur, d_mov));
+            VtoV_neighbour(img, cur, &cur, d_mov);
         }
     }
     free(shape_on_px);
