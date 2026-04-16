@@ -290,15 +290,15 @@ vec* get_shapes(bitmap_img* img) {
 
     //-------Fusion des petites formes avec d'autres adjacentes-------//
     start = clock();
+    u16 total = shapes->count;
 
     u16* ID_to_idx = malloc(sizeof(u16) * shapes->count);
-    for (int i = 0; i < shapes->count; ++i) {
+    for (int i = 0; i < total; ++i) {
         ID_to_idx[i] = i;
     }
-    shape* s;
-    //printf("MIN: %d\n", (u32)(n / DEL_THRESHOLD));
-    for (int i = 0; i < shapes->count; ) {
-        s = vec_get_element(shapes, i);
+    u16 next_slot = 0;  //case où placer la prochaine forme dans shape
+    for (int i = 0; i < total; ++i) {
+        shape* s = vec_get_element(shapes, i);
         //printf("%d|", i);
         //fflush(stdout);
         if (s->pixels->count <= (n / DEL_THRESHOLD)) { //si s est trop petite
@@ -327,17 +327,24 @@ vec* get_shapes(bitmap_img* img) {
                         s_nei = s_nei_t;
                     }
                 } else {
+                    nei_ID = left_ID;
                     s_nei = vec_get_element(shapes, ID_to_idx[left_ID]);
                 }
             } else {
                 if (top) {
                     top_ID = shape_on_px[p_nei_t];
+                    nei_ID = top_ID;
                     s_nei = vec_get_element(shapes, ID_to_idx[top_ID]);
                 } else {
                     continue;
-                    ++i;
                 }
             }
+            float t = s_nei->pixels->count / (float)(s_nei->pixels->count + s->pixels->count);
+            if (t < 0.8f) printf("%.2f|", t);
+            // s_nei->color = (Color){(u8)((float)s_nei->color.red * t + (float)s->color.red * (1.f - t)),
+            //                         (u8)((float)s_nei->color.green * t + (float)s->color.green * (1.f - t)),
+            //                         (u8)((float)s_nei->color.blue * t + (float)s->color.blue * (1.f - t))};
+            s_nei->color = s_nei->pixels->count > s->pixels->count ? s_nei->color : s->color;
 
             //2---Changer la forme voisine et le tableau global shape_on_px
             Pixel p_first_nei = *(Pixel*)vec_get_element(s_nei->pixels, 0);
@@ -354,15 +361,16 @@ vec* get_shapes(bitmap_img* img) {
             }
             
             //3---Supprimer la forme trop petite
-            vec_remove_by_index(shapes, i);
-            if (i < shapes->count) {
-                shape* last = vec_get_element(shapes, i);
-                ID_to_idx[last->ID] = i;
-            }
+            shape_destroy(s);
+            ID_to_idx[i] = NO_SHAPE;
         } else {
-            ++i;
+            memcpy(vec_get_element(shapes, next_slot), s, shapes->stride);
+            ID_to_idx[i] = next_slot;
+            next_slot++;
         }
     }
+    shapes->count = next_slot;
+    shapes->data = realloc(shapes->data, shapes->stride * shapes->count);
     free(ID_to_idx);
 
     end = clock();
@@ -438,16 +446,15 @@ int main(int argc, char** argv) {
     vec* shapes = get_shapes(&img);
 
 
-    for (int i = 0; i < shapes->count; ++i) {
-        shape* s = vec_get_element(shapes, i);
-        printf("Color %d %d %d:\n", s->color.red, s->color.green, s->color.blue);
-        //printf("Pixel count: %d|\n", s->pixels->count);
-       assert(s->pixels->count > (img.width * img.height) / DEL_THRESHOLD);
-        for (int k = 0; k < s->pixels->count; ++k) {
-            Pixel* p = vec_get_element(s->pixels, k);
-            printf("x:%d y:%d\n", *p % img.width, *p / img.width);
-        }
-    }
+    // for (int i = 0; i < shapes->count; ++i) {
+    //     shape* s = vec_get_element(shapes, i);
+    //     printf("Color %d %d %d:\n", s->color.red, s->color.green, s->color.blue);
+    //     //printf("Pixel count: %d|\n", s->pixels->count);
+    //     for (int k = 0; k < s->pixels->count; ++k) {
+    //         Pixel* p = vec_get_element(s->pixels, k);
+    //         printf("x:%d y:%d\n", *p % img.width, *p / img.width);
+    //     }
+    // }
     clock_t start = clock();
 
     create_svg(argv[2], &img, shapes);
