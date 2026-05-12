@@ -6,6 +6,7 @@
 #include <math.h>
 
 #define MAX_U32 0b11111111111111111111111111111111ULL
+#define DISTANCE_THRESHOLD 1
 
 typedef struct {
     float dif; //poids du lien
@@ -62,8 +63,8 @@ bool is_straight(vec* outline, int i, int j, int n, float* dif) {
     float sum = 0.f;
     for (int k = i + 1; k < j; ++k) {
         Vertex pk = *(Vertex*)vec_get_element(outline, k % n);
-        float d = fabsf((pi.y - pj.y)*pk.x - (pi.x - pj.x)*pk.y + pi.x*pj.y - pi.y*pj.x) / d_ij;
-        if (d > 1.f) {
+        float d = ((pi.y - pj.y)*pk.x - (pi.x - pj.x)*pk.y + pi.x*pj.y - pi.y*pj.x) / d_ij;
+        if (d > DISTANCE_THRESHOLD || d < 0.f) { //si le pixel intermédiar
             return false;
         }
         sum += d;
@@ -153,7 +154,7 @@ vec* shortest_cycle(graph* g) {
                     if (cycle_length < best_length || total_dif < best_total_dif) { //if it is a better cycle
                         //printf("BETTER CYCLE:");
                         if (cycle_length == best_length && total_dif < best_total_dif) {
-                            printf("OPTIMIZED   ");
+       //                     printf("OPTIMIZED   ");
                         }
                         worst_cycle = best_cycle;
                         best_cycle = new_cycle;
