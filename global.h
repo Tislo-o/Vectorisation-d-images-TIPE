@@ -1,6 +1,7 @@
 #pragma once
 #include <stdlib.h>
 #include <stdint.h> 
+#include "vector.h"
 
 typedef uint8_t u8;
 typedef int8_t s8;
@@ -12,3 +13,36 @@ typedef struct  {
     s8 x;
     s8 y;
 }s8_tuple;
+
+typedef u32 Pixel;
+typedef struct{
+    u16 x;
+    u16 y;
+}Vertex; //sommet
+
+
+
+typedef struct{
+    u16 width;
+    u16 height;
+    int channels; //nombre de canaux, 3 ou 4 suivant la présence du canal alpha
+    u8* data;
+}bitmap_img;
+
+typedef struct{
+    u8 red;
+    u8 green;
+    u8 blue;
+}Color;
+//une forme est une zone de l'image délimitée par son contour, une liste de sommets ou de pixels, et sa couleur
+typedef struct{
+    vec* pixels; //tableau redimmensionable des pixels à l'intérieur de la forme
+    vec* outline; //tableau redimmensionable des sommets du contour
+    Color color;
+    u16 ID;   
+}shape;
+void shape_destroy(void* p) {
+    shape* n = p;
+    if (n->pixels != NULL) free_vec(n->pixels);
+    if (n->outline != NULL) free_vec(n->outline);
+}
