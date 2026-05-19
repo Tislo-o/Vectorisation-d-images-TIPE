@@ -3,6 +3,14 @@
 #include <stdint.h> 
 #include "vector.h"
 
+float COL_THRESHOLD  = 4000.f; //distance au carrée maximale entre 2 couleurs pour qu'elles soient considérées comme identiques
+float DEL_THRESHOLD  = 10000.f; //-ratio minimal (nb pixels de l'image / nb pixels d'une forme) pour que la forme 
+                              //soit considérée comme trop petite lors de la fusion
+                              //-est une majoration du nombre de forme total après fusion
+float DISTANCE_THRESHOLD = 10;//tolérance pour l'approximation en polygones
+
+
+
 typedef uint8_t u8;
 typedef int8_t s8;
 typedef uint16_t u16;
