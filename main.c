@@ -105,9 +105,9 @@ int main(int argc, char** argv) {
 
     printf("\nDonner distance maximal entre un segment (i,j) et un pixel sur le contour entre i et j,\n");
     do {
-        printf("entre 1 et 100 (3 recommandé):");
+        printf("entre 0 et 100 (3 recommandé):");
         scanf("%f", &DISTANCE_THRESHOLD);
-    }while (DISTANCE_THRESHOLD < 1.f || DISTANCE_THRESHOLD > 3.f);
+    }while (DISTANCE_THRESHOLD < 0.f || DISTANCE_THRESHOLD > 100.f);
 
     printf("\n");
     vec* shapes = get_shapes(&img);
