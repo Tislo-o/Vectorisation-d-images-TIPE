@@ -5,10 +5,6 @@
 #include "vector.h"
 #include "dense_set.h"
 
-
-#define COL_THRESHOLD 4000.f //distance au carrée maximale entre 2 couleurs pour qu'elles soient considérées comme identiques
-#define DEL_THRESHOLD 1000.f //ratio minimal (nb pixels de l'image / nb pixels d'une forme) pour que la forme soit considérée comme trop petite
-
 #define NO_SHAPE 65535 //2^16 - 1 valeur maximale d'un u16
 
 
