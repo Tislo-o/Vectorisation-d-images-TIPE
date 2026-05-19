@@ -6,7 +6,6 @@
 #include <math.h>
 
 #define MAX_U32 0b11111111111111111111111111111111ULL
-#define DISTANCE_THRESHOLD 1
 
 typedef struct {
     float dif; //poids du lien
