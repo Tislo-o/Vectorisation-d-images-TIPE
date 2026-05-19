@@ -75,7 +75,7 @@ void transform_into_polygons(vec* shapes, bitmap_img* img) {
 
 int main(int argc, char** argv) {
     if (argc < 3){
-        printf("Donnez le nom de l'image en argument et le nom de l'image générée.\n");
+        printf("Donnez le nom de l'image en argument et le nom de l'image  à générer.\n");
         return 1;
     }
     
@@ -91,6 +91,25 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    printf("Donner la tolérance de différence de couleur pour la création des formes,\n");
+    do {
+        printf("entre 1 000 et 1 000 000 000 (4000 recommandé): ");
+        scanf("%f", &COL_THRESHOLD);
+    }while (COL_THRESHOLD < 1000.f || COL_THRESHOLD > 1000000000.f);
+
+    printf("\nDonner le ratio minimal nb_pixels_image/ nb_pixels_forme pour qu'une forme soit considérée comme trop petite, donc à fusionner,\n");
+    do {
+        printf("entre 10 et 1 000 000 (10 000 recommandé):");
+        scanf("%f", &DEL_THRESHOLD);
+    }while (DEL_THRESHOLD < 10.f || DEL_THRESHOLD > 1000000.f);
+
+    printf("\nDonner distance maximal entre un segment (i,j) et un pixel sur le contour entre i et j,\n");
+    do {
+        printf("entre 1 et 100 (3 recommandé):");
+        scanf("%f", &DISTANCE_THRESHOLD);
+    }while (DISTANCE_THRESHOLD < 1.f || DISTANCE_THRESHOLD > 3.f);
+
+    printf("\n");
     vec* shapes = get_shapes(&img);
     clock_t start = clock();
     transform_into_polygons(shapes, &img);
@@ -100,7 +119,7 @@ int main(int argc, char** argv) {
     printf("Transformation en polygones: %fms\n", ms);
 
 
-    // Affichage des pixels des formes
+    // Affichage des pixels des formes, utilisé pour debugger
     // for (int i = 0; i < shapes->count; ++i) {
     //     shape* s = vec_get_element(shapes, i);
     //     printf("Color %d %d %d:\n", s->color.red, s->color.green, s->color.blue);
@@ -113,7 +132,7 @@ int main(int argc, char** argv) {
 
     start = clock();
 
-     create_svg(argv[2], &img, shapes);
+    create_svg(argv[2], &img, shapes);
 
     end = clock();
     ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
