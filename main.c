@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
     clock_t end = clock();
     float ms = ((float)(end - start) / CLOCKS_PER_SEC) * 1000;
 
-    printf("Transformation en polygones: %fms\n", argv[2], ms);
+    printf("Transformation en polygones: %fms\n", ms);
 
 
     // Affichage des pixels des formes
