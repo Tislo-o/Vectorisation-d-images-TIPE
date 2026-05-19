@@ -99,9 +99,9 @@ int main(int argc, char** argv) {
 
     printf("\nDonner le ratio minimal nb_pixels_image/ nb_pixels_forme pour qu'une forme soit considérée comme trop petite, donc à fusionner,\n");
     do {
-        printf("entre 10 et 1 000 000 (10 000 recommandé):");
+        printf("entre 10 et 1 000 000 000 (10 000 recommandé):");
         scanf("%f", &DEL_THRESHOLD);
-    }while (DEL_THRESHOLD < 10.f || DEL_THRESHOLD > 1000000.f);
+    }while (DEL_THRESHOLD < 10.f || DEL_THRESHOLD > 1000000000.f);
 
     printf("\nDonner distance maximal entre un segment (i,j) et un pixel sur le contour entre i et j,\n");
     do {
