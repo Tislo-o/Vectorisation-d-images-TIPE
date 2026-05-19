@@ -99,7 +99,7 @@ vec* shortest_cycle(graph* g) {
 
     vec* best_cycle = empty_vec(sizeof(u32), NULL); //best cycle found
     u32 best_length = MAX_U32; //best cycle length found
-    u32 best_total_dif = INFINITY;//best total dif (sum of the dif of each link) found
+    u32 best_total_dif = MAX_U32;//best total dif (sum of the dif of each link) found
 
     u32* initial_dist = malloc(bytes_needed);
     u32* dist = malloc(bytes_needed); //will hold the distance from i to each n_idx in the graph
