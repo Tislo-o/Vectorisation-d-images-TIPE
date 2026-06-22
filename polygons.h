@@ -63,8 +63,9 @@ bool is_straight(vec* outline, int i, int j, int n, float* dif) {
     for (int k = i + 1; k < j; ++k) {
         Vertex pk = *(Vertex*)vec_get_element(outline, k % n);
         float d = ((pi.y - pj.y)*pk.x - (pi.x - pj.x)*pk.y + pi.x*pj.y - pi.y*pj.x) / d_ij;
-        if (d > DISTANCE_THRESHOLD || d < 0.f) { //si le pixel intermédiar
-            return false;
+        if (d > DISTANCE_THRESHOLD || d < 0) { //si le pixel intermédiaire est trop loin du segment
+            return false;                        //ou qu'il est à l'exterieur du segment (donc que le segment 
+                                                 //passe par l'interieur de la forme)
         }
         sum += d;
     }
@@ -168,7 +169,7 @@ vec* shortest_cycle(graph* g) {
                     parents[child_idx] = n_idx;
                     difs[child_idx] = l->dif;
 
-                    if (dist[child_idx] <= best_length) {
+                    if (dist[child_idx] < best_length) {
                         queue_element(q, child_idx);
                         //printf(" and queued");
                     }
