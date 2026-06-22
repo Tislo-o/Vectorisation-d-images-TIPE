@@ -7,7 +7,6 @@
 
 #define NO_SHAPE 65535 //2^16 - 1 valeur maximale d'un u16
 
-
 typedef enum{
     TOP = 0,
     RIGHT = 1,
@@ -39,10 +38,6 @@ Angled_Dir straights_to_angled[16] = {
     ERROR, BOTTOM_RIGHT, ERROR, BOTTOM_LEFT, //(BOTTOM, TOP) (BOTTOM, RIGHT) (BOTTOM, BOTTOM) (BOTTOM, LEFT)
     TOP_LEFT,  ERROR, BOTTOM_LEFT, ERROR,     //(LEFT, TOP) (LEFT, RIGHT) (LEFT, BOTTOM) (LEFT, LEFT)
 };
-
-
-
-
 
 //Si le pixel voisin du pixel src est hors de l'image, retourne false
 //Sinon retourne true et met dans *dst le pixel correspondant
@@ -108,7 +103,7 @@ static inline float color_distance(Color c1, Color c2) {
 //ajoute une forme a la liste de formes shapes
 //visited: tableau de n 'false'
 void add_shape(bitmap_img* img, vec* shapes, dset* remaining, u16* shape_on_px) {
-    assert(shapes->count <= 65535 && "Nombre de formes excède 65536!");
+    assert(shapes->count < 65535 && "Nombre de formes excède 65536!");
 
     shape* s = vec_push(shapes);
     s->ID = shapes->count - 1;
@@ -182,6 +177,9 @@ vec* get_shapes(bitmap_img* img) {
     printf("%d formes créées: %f ms\n", shapes->count, ms);
 
     //-------Fusion des petites formes avec d'autres adjacentes-------//
+    //Durant la procédure, 'shapes' est telle que toutes les formes avant next_slot sont assez grandes et
+    //toutes les formes à partir de i ne sont pas encore traitées. La procédure conserve l'ordre,
+    //important pour que les formes enclavées restent dans une position ulterieur à leur "parent"
     start = clock();
     u16 total = shapes->count;
 
@@ -200,7 +198,6 @@ vec* get_shapes(bitmap_img* img) {
             Color s_color = s->color;
             u16 nei_ID = NO_SHAPE;
             float best_dist = 10e30;
-            
 
              //On ajoute le sommet en haut à gauche
             Vertex starting_vertex;
@@ -284,6 +281,7 @@ vec* get_shapes(bitmap_img* img) {
             next_slot++;
         }
     }
+    //we resize after suppressions occured
     shapes->count = next_slot;
     shapes->data = realloc(shapes->data, shapes->stride * shapes->count);
     free(ID_to_idx);
@@ -338,11 +336,6 @@ vec* get_shapes(bitmap_img* img) {
                     d_cen = d_mov;            //direction du centre est maintenant celle du mouvement
                     d_mov = (tmp + 2) & 3;    //direction du mouvement prend la direction opposée du centre
             }
-            // if (prev_cur.x == cur.x && prev_cur.y == cur.y) {
-            //     printf("ERROR %d %d|", cur.x, cur.y);
-            //     fflush(stdout);
-            //     assert(0);
-            // }
             prev_cur = cur;
             VtoV_neighbour(img, cur, &cur, d_mov);
         }
