@@ -1,4 +1,4 @@
-Commande pour compiler:
+Commandes pour compiler:
 debug: gcc -g -fsanitize=address main.c -o main -lm
 release(avec optimisations): gcc -DNDEBUG -O3 main.c -o main -lm
 
